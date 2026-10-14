@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>실시간 집계</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--ink:#16181d;--sub:#6b6f78;--line:#e6e3dd;--acc:#2f6fed;--ok:#1f9d55;--warn:#d97706;--bad:#dc2626}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--ink:#eef0f3;--sub:#9aa0aa;--line:#2a2e36;--acc:#6b9bff;--ok:#3fbf75;--warn:#f0a73a;--bad:#f06262}}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;padding:16px;max-width:720px;margin:0 auto}
+h1{font-size:17px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
+h1 small{font-size:12px;color:var(--sub);font-weight:500}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.big{grid-column:1/-1}
+.k{font-size:12px;color:var(--sub)}
+.v{font-size:28px;font-weight:750;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.big .v{font-size:44px}
+.s{font-size:12.5px;color:var(--sub);margin-top:2px}
+.bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden;margin-top:10px;position:relative}
+.bar i{display:block;height:100%;background:var(--acc);border-radius:6px}
+.bar b{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.5}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:13.5px}
+td,th{padding:7px 4px;border-bottom:1px solid var(--line);text-align:right}
+td:first-child,th:first-child{text-align:left}
+th{font-size:12px;color:var(--sub);font-weight:500}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+svg{width:100%;height:120px;display:block;margin-top:8px}
+.sec{margin-top:10px}
+.stale{color:var(--bad);font-weight:600}
+</style>
+</head>
+<body>
+<h1>글로벌리서치 수집 집계 <small id="upd">불러오는 중…</small></h1>
+<div class="grid">
+  <div class="card big">
+    <div class="k">진척률 (전량 수집 완료 / 1,000곳)</div>
+    <div class="v" id="pct">–</div>
+    <div class="s" id="pcts">–</div>
+    <div class="bar"><i id="pctbar" style="width:0"></i><b style="left:50%"></b></div>
+  </div>
+  <div class="card">
+    <div class="k">총 적재 건수</div>
+    <div class="v" id="total">–</div>
+    <div class="s" id="totals">–</div>
+  </div>
+  <div class="card">
+    <div class="k">시간당 적재 (최근 10분)</div>
+    <div class="v" id="rate">–</div>
+    <div class="s" id="rates">–</div>
+  </div>
+</div>
+<div class="card sec">
+  <div class="k">시간당 적재 추이 (최근 24시간)</div>
+  <svg id="chart" viewBox="0 0 300 120" preserveAspectRatio="none"></svg>
+</div>
+<div class="card sec">
+  <div class="k" style="margin-bottom:4px">서버 7대</div>
+  <table><thead><tr><th>서버</th><th>부하(2코어)</th><th>수집기</th><th>여유 메모리</th></tr></thead><tbody id="srv"></tbody></table>
+</div>
+<script>
+const SRC = "https://api.github.com/repos/YHL-1991/gl-963e58b9/contents/stats.json?ref=data";
+const f = n => n == null ? "–" : Number(n).toLocaleString("ko-KR");
+const man = n => n == null ? "–" : (n/10000).toFixed(n >= 1e6 ? 0 : 1) + "만";
+function color(load){ if(load==null) return "var(--sub)"; return load>8?"var(--bad)":load>4?"var(--warn)":"var(--ok)"; }
+function chart(h){
+  const el = document.getElementById("chart"); const pts = h.filter(p=>p.rate!=null);
+  if(pts.length<2){ el.innerHTML=""; return; }
+  const max = Math.max(...pts.map(p=>p.rate), 1);
+  const xy = pts.map((p,i)=>[i/(pts.length-1)*300, 115 - p.rate/max*105]);
+  const line = xy.map(([x,y],i)=>(i?"L":"M")+x.toFixed(1)+" "+y.toFixed(1)).join(" ");
+  el.innerHTML = `<path d="${line} L300 120 L0 120 Z" fill="var(--acc)" opacity=".12"/><path d="${line}" fill="none" stroke="var(--acc)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+  <text x="2" y="10" font-size="9" fill="var(--sub)">${man(max)}/h</text><text x="2" y="118" font-size="9" fill="var(--sub)">${pts[0].t}</text><text x="298" y="118" font-size="9" fill="var(--sub)" text-anchor="end">${pts[pts.length-1].t}</text>`;
+}
+async function load(){
+  try{
+    const r = await fetch(SRC, {headers:{Accept:"application/vnd.github.raw"}, cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const age = (Date.now() - new Date(d.updated.replace(" ","T")+"+09:00"))/60000;
+    const u = document.getElementById("upd"); u.textContent = "갱신 " + d.updated.slice(11,16) + (age>5?" · 멈춤?":""); u.className = age>5?"stale":"";
+    document.getElementById("pct").textContent = (d.pct ?? "–") + "%";
+    document.getElementById("pcts").textContent = `완료 ${f(d.done)}곳 · 50%까지 ${f(d.left50)}곳`;
+    document.getElementById("pctbar").style.width = Math.min(100, d.pct||0) + "%";
+    document.getElementById("total").textContent = man(d.total);
+    document.getElementById("totals").textContent = `목표 2,000만의 ${d.total? (d.total/d.goal_rows*100).toFixed(1):"–"}%`;
+    document.getElementById("rate").textContent = man(d.rate_h);
+    const need = d.total ? Math.max(0, d.goal_rows - d.total) : null;
+    const hrs = d.rate_h ? need / d.rate_h : null;
+    document.getElementById("rates").textContent = hrs!=null ? `이 속도면 2,000만까지 ${hrs<48? Math.round(hrs)+"시간" : (hrs/24).toFixed(1)+"일"}` : "–";
+    document.getElementById("srv").innerHTML = (d.servers||[]).map(s=>`<tr><td><span class="dot" style="background:${color(s.load)}"></span>${s.n}</td><td>${s.load??"–"}</td><td>${s.col??"–"}</td><td>${s.mem!=null? f(s.mem)+"MB":"–"}</td></tr>`).join("");
+    chart(d.hist||[]);
+  }catch(e){ const u=document.getElementById("upd"); u.textContent="불러오기 실패 ("+e.message+")"; u.className="stale"; }
+}
+load(); setInterval(load, 90000);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) load(); });
+</script>
+</body>
+</html>
